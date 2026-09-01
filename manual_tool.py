@@ -13,13 +13,47 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def order_corners(points):
     return [points[i] for i in (0, 1, 2, 3)]
+
+
+def oriented_image(path: Path) -> Image.Image:
+    """Load pixels in the orientation shown by Finder and the browser."""
+    with Image.open(path) as image:
+        return ImageOps.exif_transpose(image).convert("RGB")
+
+
+def display_points(points, path: Path):
+    """Map detector coordinates from raw pixels into EXIF-normalized pixels."""
+    with Image.open(path) as image:
+        width, height = image.size
+        orientation = image.getexif().get(274, 1)
+    mapped = []
+    for x, y in points:
+        if orientation == 2:
+            mapped.append([width - 1 - x, y])
+        elif orientation == 3:
+            mapped.append([width - 1 - x, height - 1 - y])
+        elif orientation == 4:
+            mapped.append([x, height - 1 - y])
+        elif orientation == 5:
+            mapped.append([y, x])
+        elif orientation == 6:
+            mapped.append([height - 1 - y, x])
+        elif orientation == 7:
+            mapped.append([height - 1 - y, width - 1 - x])
+        elif orientation == 8:
+            mapped.append([y, width - 1 - x])
+        else:
+            mapped.append([x, y])
+    display_width, display_height = ImageOps.exif_transpose(Image.open(path)).size
+    return [[max(0, min(display_width - 1, x)), max(0, min(display_height - 1, y))]
+            for x, y in mapped]
 
 
 def colorchecker_correction(image: Image.Image) -> Image.Image:
@@ -65,17 +99,16 @@ def colorchecker_correction(image: Image.Image) -> Image.Image:
 
 
 @lru_cache(maxsize=2)
-def corrected_source(path: str) -> Image.Image:
+def corrected_source(path: str, mtime_ns: int) -> Image.Image:
     with Image.open(path) as image:
-        return colorchecker_correction(image.convert("RGB"))
+        return colorchecker_correction(ImageOps.exif_transpose(image).convert("RGB"))
 
 
 def save_crop(source: Path, output: Path, points: list[list[float]], rotation: float = 0, correction: bool = True) -> None:
     if correction:
-        image = corrected_source(str(source))
+            image = corrected_source(str(source), source.stat().st_mtime_ns)
     else:
-        with Image.open(source) as source_image:
-            image = source_image.convert("RGB")
+        image = oriented_image(source)
     if rotation:
         image = image.rotate(rotation, expand=True)
         src = order_corners(points)
@@ -121,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
             else:
                 with Image.open(path) as image:
-                    image = image.convert("RGB")
+                    image = ImageOps.exif_transpose(image).convert("RGB")
                     image.thumbnail((180, 180), Image.Resampling.LANCZOS)
                     buffer = io.BytesIO()
                     image.save(buffer, format="JPEG", quality=82)
@@ -139,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
                     if box is None:
                         self.send_json({"corners": None, "note": note})
                     else:
-                        points = box.astype(float).tolist()
+                        points = display_points(box.astype(float).tolist(), path)
                         edges = [(points[0], points[1]), (points[1], points[2])]
                         edge = max(edges, key=lambda pair: abs(pair[1][0] - pair[0][0]))
                         dx = edge[1][0] - edge[0][0]
@@ -165,9 +198,9 @@ class Handler(BaseHTTPRequestHandler):
                     with Image.open(path) as image:
                         buffer = io.BytesIO()
                         if correction:
-                            image = corrected_source(str(path))
+                            image = corrected_source(str(path), path.stat().st_mtime_ns)
                         else:
-                            image = image.convert("RGB")
+                            image = ImageOps.exif_transpose(image).convert("RGB")
                         if rotation:
                             image = image.rotate(rotation, expand=True)
                         image.save(buffer, format="JPEG", quality=95)
