@@ -25,6 +25,15 @@ def rect_area(box: np.ndarray) -> float:
     return float(cv2.contourArea(box.astype(np.float32)))
 
 
+def rect_iou(first: np.ndarray, second: np.ndarray) -> float:
+    first_area = rect_area(first)
+    second_area = rect_area(second)
+    intersection, _ = cv2.intersectConvexConvex(
+        first.astype(np.float32), second.astype(np.float32)
+    )
+    return float(intersection) / max(first_area + second_area - float(intersection), 1.0)
+
+
 def bright_spine_candidate(img: np.ndarray):
     """Find a tall, light book against a dark background, despite hands."""
     h, w = img.shape[:2]
@@ -720,7 +729,16 @@ def detect(img_path: Path):
     # ml on kanko_3.)
     scored.sort(key=lambda x: -x[0])
     best = scored[0]
-    if len(scored) >= 2:
+    by_name = {candidate[1]: candidate for candidate in scored}
+    ml_color_consensus = (
+        best[0] < 0.08
+        and "ml" in by_name
+        and "color" in by_name
+        and rect_iou(by_name["ml"][2], by_name["color"][2]) >= 0.90
+    )
+    if ml_color_consensus:
+        best = max((by_name["ml"], by_name["color"]), key=lambda candidate: candidate[0])
+    elif len(scored) >= 2:
         top_s = scored[0][0]
         contenders = [c for c in scored if top_s > 0 and c[0] >= 0.92 * top_s]
         if len(contenders) >= 2:

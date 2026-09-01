@@ -508,7 +508,8 @@ def detect(img_path: Path):
         # which uses edge-floodfill + bg-distance and handles low-contrast books.
         from detect import detect as heuristic_detect
         _, h_box, _, _, _ = heuristic_detect(img_path)
-        if h_box is not None:
+        h_area = cv2.contourArea(h_box) if h_box is not None else 0
+        if h_box is not None and h_area < 0.995 * image_area:
             box = h_box.astype(np.float32)
             print("fell back to detect.py heuristic")
 
