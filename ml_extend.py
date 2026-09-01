@@ -9,6 +9,7 @@
 4. Output overlay vs v26 (with user's green target).
 """
 import sys
+import threading
 from pathlib import Path
 import cv2
 import numpy as np
@@ -19,22 +20,26 @@ PROJECT = Path("/Users/murat/git/private/bookcoverfixer")
 PREVIEWS_V26 = PROJECT / "previews_v26"
 OUT = PROJECT / "overlay"
 _session = None
+_session_lock = threading.Lock()
 
 
 def _get_session():
     global _session
     if _session is None:
-        _session = new_session("u2net")
+        with _session_lock:
+            if _session is None:
+                _session = new_session("u2net")
     return _session
 
 
+def warm_model() -> None:
+    _get_session()
+
+
 def ml_mask(img_path: Path) -> np.ndarray:
-    with open(img_path, "rb") as f:
-        data = f.read()
-    out = remove(data, session=_get_session())
-    pil = Image.open(__import__("io").BytesIO(out)).convert("RGBA")
-    arr = np.array(pil)
-    alpha = arr[:, :, 3]
+    with Image.open(img_path) as image:
+        mask = remove(image, session=_get_session(), only_mask=True)
+        alpha = np.asarray(mask.convert("L"))
     _, mask = cv2.threshold(alpha, 64, 255, cv2.THRESH_BINARY)
     return mask
 

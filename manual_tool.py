@@ -158,6 +158,14 @@ def crop_jpeg(source: Path, points: list[list[float]], rotation: float = 0,
     return buffer.getvalue()
 
 
+def warm_detector_model() -> None:
+    try:
+        from ml_extend import warm_model
+        warm_model()
+    except Exception as exc:
+        print(f"Detector warm-up failed: {exc}")
+
+
 class Handler(BaseHTTPRequestHandler):
     source: Path
     output: Path
@@ -410,6 +418,7 @@ def main():
     Handler.output = args.output.resolve()
     Handler.config_path = config_path
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    threading.Thread(target=warm_detector_model, daemon=True).start()
     print(f"Book scan station: http://127.0.0.1:{args.port}")
     print(f"Source: {Handler.source}")
     print(f"Output: {Handler.output}")

@@ -61,6 +61,10 @@ let names = [],
 const NS = 'http://www.w3.org/2000/svg';
 const CMS_SESSION_KEY = 'bookcropper.cms.session';
 const MAX_CMS_POSITION = 2147483647;
+const suggestionCache = new Map();
+const scanCacheKeys = new Map();
+let prefetchedPreview = null;
+let prefetchedPreviewKey = '';
 
 function defaultCorners() {
   const [w, h] = natural, m = Math.min(w, h) * .025;
@@ -189,6 +193,10 @@ async function saveLocalSettings() {
       })
     });
     localSettings = response;
+    suggestionCache.clear();
+    scanCacheKeys.clear();
+    prefetchedPreview = null;
+    prefetchedPreviewKey = '';
     sourceDirectory.value = response.sourceDirectory;
     finalStoreDirectory.value = response.finalStoreDirectory;
     settingsStatus.textContent = 'Settings saved';
@@ -214,12 +222,45 @@ function applySuggestion(suggestion) {
   load(true);
 }
 
+function suggestionFor(name) {
+  if (!suggestionCache.has(name)) {
+    const request = fetch('/api/suggestion?path=' + encodeURIComponent(name))
+      .then(response => response.json())
+      .catch(error => {
+        suggestionCache.delete(name);
+        throw error;
+      });
+    suggestionCache.set(name, request);
+  }
+  return suggestionCache.get(name);
+}
+
+function scanImageUrl(name, rotationValue = 0, corrected = correction.checked) {
+  if (!scanCacheKeys.has(name)) scanCacheKeys.set(name, Date.now());
+  return '/api/image?path=' + encodeURIComponent(name)
+    + '&rotate=' + rotationValue
+    + '&correct=' + (corrected ? '1' : '0')
+    + '&cache=' + scanCacheKeys.get(name);
+}
+
+function prefetchNextScan() {
+  const nextName = names[index + 1];
+  if (!nextName) return;
+  suggestionFor(nextName).catch(() => {});
+  const previewKey = `${nextName}|${Number(correction.checked)}`;
+  if (prefetchedPreviewKey !== previewKey) {
+    prefetchedPreviewKey = previewKey;
+    prefetchedPreview = new Image();
+    prefetchedPreview.src = scanImageUrl(nextName);
+  }
+}
+
 function requestSuggestion() {
   const request = ++suggestionRequest;
   suggestionEligible = true;
   pendingSuggestion = null;
   status.textContent = 'Calculating crop...';
-  fetch('/api/suggestion?path=' + encodeURIComponent(path())).then(r => r.json()).then(suggestion => {
+  suggestionFor(path()).then(suggestion => {
     if (request !== suggestionRequest) return;
     if (!suggestion.corners) {
       status.textContent = suggestion.note || 'No crop suggestion';
@@ -227,6 +268,7 @@ function requestSuggestion() {
     }
     if (baseNatural[0]) applySuggestion(suggestion);
     else pendingSuggestion = suggestion;
+    prefetchNextScan();
   }).catch(() => {
     if (request === suggestionRequest) status.textContent = 'Crop suggestion failed';
   });
@@ -379,7 +421,7 @@ function load(keepCorners = false) {
   image.onerror = () => {
     status.textContent = 'Unable to load preview';
   };
-  image.src = '/api/image?path=' + encodeURIComponent(path()) + '&rotate=' + rotation + '&correct=' + corrected + '&cache=' + Date.now();
+  image.src = scanImageUrl(path(), rotation, corrected === '1');
 }
 
 function setRotation(value) {
@@ -1017,6 +1059,8 @@ async function uploadCurrentCrop() {
       throw new Error(`CMS upload succeeded; local finalization failed: ${error.message}`);
     }
     const completedPosition = cmsPosition;
+    suggestionCache.delete(completedPath);
+    scanCacheKeys.delete(completedPath);
     replaceImageList(finalized.images, index);
     cmsUploadStatus.textContent = `Uploaded ${filename} as image ${completedPosition} and archived locally`;
   } catch (error) {
