@@ -578,7 +578,10 @@ def detect(img_path: Path):
     # to a spine (moiver_3: 167x3511, corners uniformly white so the corner
     # check alone misses it).
     strip = max(h, w) / max(min(h, w), 1) > 6.0
-    if max_corner_d > 25.0 or strip:
+    # Uneven backgrounds are common around books and must not bypass detection.
+    # Keep the shortcut only for extreme spine strips, which are intentionally
+    # already cropped to their full content.
+    if strip:
         full = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.int32)
         return img, full, "pre-cropped (full image)"
 
