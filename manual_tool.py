@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import mimetypes
+import re
 import threading
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -144,6 +145,10 @@ class Handler(BaseHTTPRequestHandler):
                     if box is None:
                         self.send_json({"corners": None, "note": note})
                     else:
+                        heuristic_score = re.search(r"^heur \(score=([0-9.]+)", note)
+                        if heuristic_score and float(heuristic_score.group(1)) < 0.08:
+                            self.send_json({"corners": None, "note": "Low-confidence suggestion; manual crop recommended"})
+                            return
                         # The ensemble's detector coordinates are already in the
                         # displayed orientation; only the Pillow image needs EXIF
                         # normalization.
