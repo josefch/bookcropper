@@ -707,9 +707,14 @@ async function cmsRequest(endpoint, init = {}, authenticated = true) {
     }
   }
   if (!response.ok) {
-    const error = new Error(cmsErrorMessage(data, `CMS request failed (${response.status})`));
+    const message = response.status === 401 && authenticated
+      ? 'CMS connection expired. Reconnect and retry; the crop was not archived.'
+      : cmsErrorMessage(data, `CMS request failed (${response.status})`);
+    const error = new Error(message);
     error.status = response.status;
-    if (response.status === 401 && authenticated) clearCmsSession('Connection expired');
+    if (response.status === 401 && authenticated) {
+      clearCmsSession('Connection expired', true);
+    }
     throw error;
   }
   return data;
@@ -726,14 +731,16 @@ function setCmsSession(token, expiresAt) {
   updateCmsUi();
 }
 
-function clearCmsSession(message = 'Disconnected') {
+function clearCmsSession(message = 'Disconnected', preserveSelection = false) {
   cmsToken = null;
   cmsTokenExpiresAt = 0;
-  selectedCmsBook = null;
   cmsOverwrite.checked = false;
   sessionStorage.removeItem(CMS_SESSION_KEY);
   cmsResults.replaceChildren();
-  cmsSelected.hidden = true;
+  if (!preserveSelection) {
+    selectedCmsBook = null;
+    cmsSelected.hidden = true;
+  }
   cmsUploadStatus.textContent = '';
   cmsConnection.textContent = message;
   updateCmsUi();
