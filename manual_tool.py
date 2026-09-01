@@ -28,34 +28,6 @@ def oriented_image(path: Path) -> Image.Image:
         return ImageOps.exif_transpose(image).convert("RGB")
 
 
-def display_points(points, path: Path):
-    """Map detector coordinates from raw pixels into EXIF-normalized pixels."""
-    with Image.open(path) as image:
-        width, height = image.size
-        orientation = image.getexif().get(274, 1)
-    mapped = []
-    for x, y in points:
-        if orientation == 2:
-            mapped.append([width - 1 - x, y])
-        elif orientation == 3:
-            mapped.append([width - 1 - x, height - 1 - y])
-        elif orientation == 4:
-            mapped.append([x, height - 1 - y])
-        elif orientation == 5:
-            mapped.append([y, x])
-        elif orientation == 6:
-            mapped.append([height - 1 - y, x])
-        elif orientation == 7:
-            mapped.append([height - 1 - y, width - 1 - x])
-        elif orientation == 8:
-            mapped.append([y, width - 1 - x])
-        else:
-            mapped.append([x, y])
-    display_width, display_height = ImageOps.exif_transpose(Image.open(path)).size
-    return [[max(0, min(display_width - 1, x)), max(0, min(display_height - 1, y))]
-            for x, y in mapped]
-
-
 def colorchecker_correction(image: Image.Image) -> Image.Image:
     """Apply the scanner correction estimated from the 24-patch measurement."""
     rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
@@ -172,7 +144,10 @@ class Handler(BaseHTTPRequestHandler):
                     if box is None:
                         self.send_json({"corners": None, "note": note})
                     else:
-                        points = display_points(box.astype(float).tolist(), path)
+                        # The ensemble's detector coordinates are already in the
+                        # displayed orientation; only the Pillow image needs EXIF
+                        # normalization.
+                        points = box.astype(float).tolist()
                         edges = [(points[0], points[1]), (points[1], points[2])]
                         edge = max(edges, key=lambda pair: abs(pair[1][0] - pair[0][0]))
                         dx = edge[1][0] - edge[0][0]
