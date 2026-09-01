@@ -69,9 +69,14 @@ function renderThumbs() {
 }
 
 function updateActiveThumb() {
-  thumbs.querySelectorAll('.thumb').forEach((thumb, i) => {
+  const items = thumbs.querySelectorAll('.thumb');
+  items.forEach((thumb, i) => {
     thumb.classList.toggle('active', i === index);
   });
+  const activeThumb = items[index];
+  if (activeThumb) {
+    requestAnimationFrame(() => activeThumb.scrollIntoView({block: 'nearest', inline: 'nearest'}));
+  }
 }
 
 function applySuggestion(suggestion) {
