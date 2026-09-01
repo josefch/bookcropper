@@ -25,6 +25,26 @@ def rect_area(box: np.ndarray) -> float:
     return float(cv2.contourArea(box.astype(np.float32)))
 
 
+def bright_spine_candidate(img: np.ndarray):
+    """Find a tall, light book against a dark background, despite hands."""
+    h, w = img.shape[:2]
+    if h / max(w, 1) < 1.2:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, 45, 255, cv2.THRESH_BINARY)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    candidates = []
+    for x, y, width, height, area in stats[1:]:
+        if area < h * w * 0.03 or height / max(width, 1) < 2.5:
+            continue
+        candidates.append((area, x, y, width, height))
+    if not candidates:
+        return None
+    _, x, y, width, height = max(candidates)
+    return np.array([[x, y], [x + width - 1, y],
+                     [x + width - 1, y + height - 1], [x, y + height - 1]], dtype=np.float32)
+
+
 def perimeter_gradient(box: np.ndarray, gmag: np.ndarray) -> float:
     h, w = gmag.shape[:2]
     vals = []
@@ -613,6 +633,10 @@ def detect(img_path: Path):
     bgd_total = int(cv2.countNonZero(bgd_clean))
 
     candidates = []
+
+    spine_box = bright_spine_candidate(img)
+    if spine_box is not None:
+        candidates.append(("bright-spine", spine_box))
 
     _, ml_box = ml_extend.detect(img_path)
     if ml_box is not None:
