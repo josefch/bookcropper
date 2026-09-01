@@ -25,7 +25,12 @@
     </div>
   </section>
   <aside>
-    <section class="cms-panel" aria-labelledby="cmsHeading">
+    <div class="view-tabs" role="tablist" aria-label="Sidebar view">
+      <button id="workTab" type="button" role="tab" aria-selected="true" aria-controls="workView" class="active">Work</button>
+      <button id="settingsTab" type="button" role="tab" aria-selected="false" aria-controls="settingsView">Settings</button>
+    </div>
+    <div id="workView" role="tabpanel" aria-labelledby="workTab">
+      <section class="cms-panel" aria-labelledby="cmsHeading">
       <div class="section-heading">
         <h2 id="cmsHeading">CMS Upload</h2>
         <span id="cmsConnection" class="connection-state">Disconnected</span>
@@ -53,24 +58,34 @@
         <button id="cmsUpload" class="upload-button" disabled>Upload Current Crop</button>
       </div>
       <p id="cmsUploadStatus" class="cms-status" aria-live="polite"></p>
-    </section>
+      </section>
 
-    <h2>Scans</h2>
-    <div id="thumbs" class="thumb-grid"></div>
-    <h2>Corner Magnifier</h2>
-    <canvas id="loupe" class="loupe" width="240" height="240"></canvas>
-    <div class="loupe-controls">
-      <label><input id="loupeToggle" type="checkbox" checked> Show</label>
-      <select id="loupeZoom">
-        <option value="2" selected>2x</option>
-        <option value="4">4x</option>
-        <option value="8">8x</option>
-      </select>
+      <h2>Scans</h2>
+      <div id="thumbs" class="thumb-grid"></div>
+      <h2>Corner Magnifier</h2>
+      <canvas id="loupe" class="loupe" width="240" height="240"></canvas>
+      <div class="loupe-controls">
+        <label><input id="loupeToggle" type="checkbox" checked> Show</label>
+        <select id="loupeZoom">
+          <option value="2" selected>2x</option>
+          <option value="4">4x</option>
+          <option value="8">8x</option>
+        </select>
+      </div>
+      <label class="hint"><input id="correction" type="checkbox" checked> ColorChecker correction</label>
+      <p class="hint">Drag the four blue corners to the physical book boundary. Hold Option (Alt) and drag along an edge to straighten it.</p>
+      <p id="info" class="hint"></p>
+      <div class="row"><button id="reset">Reset Rectangle</button></div>
     </div>
-    <label class="hint"><input id="correction" type="checkbox" checked> ColorChecker correction</label>
-    <p class="hint">Drag the four blue corners to the physical book boundary. Hold Option (Alt) and drag along an edge to straighten it.</p>
-    <p id="info" class="hint"></p>
-    <div class="row"><button id="reset">Reset Rectangle</button></div>
+    <section id="settingsView" role="tabpanel" aria-labelledby="settingsTab" hidden>
+      <h2>Directories</h2>
+      <label class="field-label" for="sourceDirectory">Source scans directory</label>
+      <input id="sourceDirectory" class="directory-input" type="text" autocomplete="off" spellcheck="false">
+      <label class="field-label" for="finalStoreDirectory">Final-store directory</label>
+      <input id="finalStoreDirectory" class="directory-input" type="text" autocomplete="off" spellcheck="false">
+      <button id="saveSettings" class="settings-save" type="button">Save Settings</button>
+      <p id="settingsStatus" class="cms-status" aria-live="polite"></p>
+    </section>
   </aside>
 </main>
 <script src="/manual_tool.js"></script>

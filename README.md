@@ -18,6 +18,17 @@ python3 manual_tool.py /path/to/scanned --output manual_crops --port 8765
 
 Open <http://127.0.0.1:8765>.
 
+The **Settings** sidebar view stores the source scans and final-store
+directories in `~/.config/bookcropper/config.json`. After saving settings, the
+source argument is optional:
+
+```sh
+python3 manual_tool.py --port 8765
+```
+
+CLI values override persisted settings for the current process. Use
+`--final-store /path/to/final` to override the final-store directory.
+
 The editor supports rectangular crop handles, draggable crop edges, corner rotation, Option/Alt straighten guides, zoom, corner magnification, filename URL hashes, and the optional ColorChecker correction preset.
 
 ### CMS upload
@@ -34,6 +45,12 @@ Filenames ending in `_<number>` select the matching image position
 automatically. Occupied positions are locked against replacement until
 **Unlock replacement** is explicitly enabled. The CMS token is short-lived and
 kept only in browser session storage. **Disconnect** revokes it immediately.
+
+After CMS confirms an upload, the exact 150 DPI JPEG sent to CMS is written to
+the configured final-store directory and the original scan is deleted. The
+file selector and thumbnails then refresh from the source directory. An
+existing final-store filename stops local finalization without deleting the
+source scan.
 
 After changing `manual_tool.py`, restart the local server. HTML, CSS, and
 JavaScript changes are served directly and only require a browser refresh.

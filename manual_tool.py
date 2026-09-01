@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import mimetypes
+import os
 import re
 import threading
 from functools import lru_cache
@@ -18,6 +19,52 @@ from PIL import Image, ImageOps
 
 EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 OUTPUT_SCALE = 0.5
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "bookcropper" / "config.json"
+
+
+class RequestError(ValueError):
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def list_images(source: Path) -> list[str]:
+    return sorted(
+        str(path.relative_to(source))
+        for path in source.rglob("*")
+        if path.is_file() and path.suffix.lower() in EXTS
+    )
+
+
+def load_config(path: Path) -> dict[str, str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def save_config(path: Path, value: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def configured_directory(value: object, label: str, create: bool = False) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise RequestError(f"{label} is required")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise RequestError(f"{label} must be an absolute path")
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    if not path.is_dir():
+        raise RequestError(f"{label} is not a directory")
+    return path.resolve()
 
 
 def order_corners(points):
@@ -114,6 +161,8 @@ def crop_jpeg(source: Path, points: list[list[float]], rotation: float = 0,
 class Handler(BaseHTTPRequestHandler):
     source: Path
     output: Path
+    final_store: Path | None
+    config_path: Path
     lock = threading.Lock()
 
     def log_message(self, fmt, *args):
@@ -134,9 +183,14 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path in ("/manual_tool.css", "/manual_tool.js"):
             asset = Path(__file__).with_name(parsed.path.lstrip("/"))
             self.serve_file(asset, "text/css" if asset.suffix == ".css" else "text/javascript")
+        elif parsed.path == "/api/settings":
+            self.send_json({
+                "sourceDirectory": str(self.source),
+                "finalStoreDirectory": str(self.final_store) if self.final_store else "",
+                "configPath": str(self.config_path),
+            })
         elif parsed.path == "/api/images":
-            images = sorted(str(p.relative_to(self.source)) for p in self.source.rglob("*") if p.is_file() and p.suffix.lower() in EXTS)
-            self.send_json({"images": images})
+            self.send_json({"images": list_images(self.source)})
         elif parsed.path == "/api/thumbnail":
             rel = unquote(parse_qs(parsed.query).get("path", [""])[0])
             path = (self.source / rel).resolve()
@@ -219,21 +273,26 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path not in ("/api/save", "/api/crop"):
+        parsed = urlparse(self.path)
+        if parsed.path not in ("/api/save", "/api/crop", "/api/finalize", "/api/settings"):
             self.send_error(404)
             return
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            if parsed.path == "/api/settings":
+                self.update_settings()
+                return
+            if parsed.path == "/api/finalize":
+                self.finalize_upload(parsed)
+                return
+            body = json.loads(self.read_body())
             rel = body["path"]
             points = body["corners"]
             rotation = float(body.get("rotation", 0)) % 360
             correction = bool(body.get("correction", True))
             if len(points) != 4 or any(len(p) != 2 for p in points):
-                raise ValueError("four [x,y] corners required")
-            source = (self.source / rel).resolve()
-            if not source.is_file() or self.source not in source.parents:
-                raise ValueError("invalid source path")
-            if self.path == "/api/crop":
+                raise RequestError("four [x,y] corners required")
+            source = self.source_path(rel)
+            if parsed.path == "/api/crop":
                 with self.lock:
                     data = crop_jpeg(source, points, rotation, correction)
                 self.send_bytes(data, "image/jpeg")
@@ -245,24 +304,117 @@ class Handler(BaseHTTPRequestHandler):
                 save_crop(source, out, points, rotation, correction)
                 sidecar.write_text(json.dumps({"source": rel, "rotation": rotation, "correction": correction, "corners": points}, indent=2) + "\n")
             self.send_json({"saved": str(out), "sidecar": str(sidecar)})
+        except RequestError as exc:
+            self.send_json({"error": str(exc)}, exc.status)
         except Exception as exc:
             self.send_json({"error": str(exc)}, 400)
+
+    def read_body(self, max_bytes: int = 30 * 1024 * 1024) -> bytes:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            raise RequestError("request body is required")
+        if length > max_bytes:
+            raise RequestError("request body is too large", 413)
+        return self.rfile.read(length)
+
+    def source_path(self, relative: object) -> Path:
+        if not isinstance(relative, str) or not relative:
+            raise RequestError("invalid source path")
+        path = (self.source / relative).resolve()
+        if not path.is_file() or self.source not in path.parents:
+            raise RequestError("invalid source path")
+        return path
+
+    def update_settings(self) -> None:
+        body = json.loads(self.read_body(64 * 1024))
+        source = configured_directory(body.get("sourceDirectory"), "Source directory")
+        final_value = body.get("finalStoreDirectory")
+        final_store = configured_directory(final_value, "Final-store directory", create=True) if final_value else None
+        if final_store and (final_store == source or source in final_store.parents):
+            raise RequestError("Final-store directory must be outside the source directory")
+        value = {
+            "sourceDirectory": str(source),
+            "finalStoreDirectory": str(final_store) if final_store else "",
+        }
+        with self.lock:
+            save_config(self.config_path, value)
+            type(self).source = source
+            type(self).final_store = final_store
+            images = list_images(source)
+        self.send_json({**value, "configPath": str(self.config_path), "images": images})
+
+    def finalize_upload(self, parsed) -> None:
+        relative = unquote(parse_qs(parsed.query).get("path", [""])[0])
+        data = self.read_body()
+        with Image.open(io.BytesIO(data)) as image:
+            dpi = image.info.get("dpi", (0, 0))
+            if image.format != "JPEG" or not all(145 <= float(value) <= 155 for value in dpi[:2]):
+                raise RequestError("final crop must be a 150 DPI JPEG")
+            image.verify()
+        with self.lock:
+            source = self.source_path(relative)
+            if not self.final_store:
+                raise RequestError("Final-store directory is not configured", 409)
+            destination = self.final_store / f"{Path(relative).stem}.jpg"
+            if destination.exists():
+                raise RequestError(f"Final crop already exists: {destination.name}", 409)
+            temporary = destination.with_name(
+                f".{destination.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            try:
+                with temporary.open("wb") as file:
+                    file.write(data)
+                    file.flush()
+                    os.fsync(file.fileno())
+                temporary.replace(destination)
+                try:
+                    source.unlink()
+                except Exception:
+                    destination.unlink(missing_ok=True)
+                    raise
+            finally:
+                temporary.unlink(missing_ok=True)
+            corrected_source.cache_clear()
+            images = list_images(self.source)
+        self.send_json({
+            "archived": str(destination),
+            "removed": relative,
+            "images": images,
+        })
 
 
 def main():
     ap = argparse.ArgumentParser(description="Review and perspective-crop book scans locally.")
-    ap.add_argument("source", type=Path)
+    ap.add_argument("source", type=Path, nargs="?")
     ap.add_argument("--output", type=Path, default=Path("manual_crops"))
+    ap.add_argument("--final-store", type=Path)
+    ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
-    if not args.source.is_dir():
-        ap.error(f"not a directory: {args.source}")
-    Handler.source = args.source.resolve()
+    config_path = args.config.expanduser().resolve()
+    config = load_config(config_path)
+    source_value = args.source or config.get("sourceDirectory")
+    final_store_value = args.final_store or config.get("finalStoreDirectory")
+    try:
+        Handler.source = configured_directory(str(source_value) if source_value else None, "Source directory")
+        Handler.final_store = (
+            configured_directory(str(final_store_value), "Final-store directory", create=True)
+            if final_store_value else None
+        )
+    except RequestError as exc:
+        ap.error(str(exc))
+    if Handler.final_store and (
+        Handler.final_store == Handler.source or Handler.source in Handler.final_store.parents
+    ):
+        ap.error("Final-store directory must be outside the source directory")
     Handler.output = args.output.resolve()
+    Handler.config_path = config_path
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Book scan station: http://127.0.0.1:{args.port}")
     print(f"Source: {Handler.source}")
     print(f"Output: {Handler.output}")
+    print(f"Final store: {Handler.final_store or 'not configured'}")
+    print(f"Config: {Handler.config_path}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

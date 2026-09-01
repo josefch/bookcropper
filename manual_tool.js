@@ -19,7 +19,15 @@ const files = document.querySelector('#files'),
   cmsUploadStatus = document.querySelector('#cmsUploadStatus'),
   cmsPositionInput = document.querySelector('#cmsPosition'),
   cmsOverwriteControl = document.querySelector('#cmsOverwriteControl'),
-  cmsOverwrite = document.querySelector('#cmsOverwrite');
+  cmsOverwrite = document.querySelector('#cmsOverwrite'),
+  workTab = document.querySelector('#workTab'),
+  settingsTab = document.querySelector('#settingsTab'),
+  workView = document.querySelector('#workView'),
+  settingsView = document.querySelector('#settingsView'),
+  sourceDirectory = document.querySelector('#sourceDirectory'),
+  finalStoreDirectory = document.querySelector('#finalStoreDirectory'),
+  saveSettingsButton = document.querySelector('#saveSettings'),
+  settingsStatus = document.querySelector('#settingsStatus');
 let names = [],
   index = 0,
   natural = [0, 0],
@@ -48,7 +56,8 @@ let names = [],
   cmsTokenExpiresAt = 0,
   selectedCmsBook = null,
   cmsPosition = 1,
-  cmsSearchTimer = null;
+  cmsSearchTimer = null,
+  localSettings = null;
 const NS = 'http://www.w3.org/2000/svg';
 const CMS_SESSION_KEY = 'bookcropper.cms.session';
 const MAX_CMS_POSITION = 2147483647;
@@ -105,6 +114,92 @@ function updateActiveThumb() {
   const activeThumb = items[index];
   if (activeThumb) {
     requestAnimationFrame(() => activeThumb.scrollIntoView({block: 'nearest', inline: 'nearest'}));
+  }
+}
+
+function setSidebarView(view) {
+  const settingsActive = view === 'settings';
+  workView.hidden = settingsActive;
+  settingsView.hidden = !settingsActive;
+  workTab.classList.toggle('active', !settingsActive);
+  settingsTab.classList.toggle('active', settingsActive);
+  workTab.setAttribute('aria-selected', String(!settingsActive));
+  settingsTab.setAttribute('aria-selected', String(settingsActive));
+}
+
+function replaceImageList(nextNames, preferredIndex = 0, requestedName = '') {
+  names = Array.isArray(nextNames) ? nextNames : [];
+  files.replaceChildren();
+  names.forEach(name => files.add(new Option(name, name)));
+  renderThumbs();
+  if (!names.length) {
+    index = 0;
+    natural = [0, 0];
+    baseNatural = [0, 0];
+    corners = [];
+    image.removeAttribute('src');
+    svg.replaceChildren();
+    history.replaceState(null, '', location.pathname + location.search);
+    status.textContent = 'No scans remaining';
+    info.textContent = '';
+    return;
+  }
+  const requestedIndex = requestedName ? names.indexOf(requestedName) : -1;
+  index = requestedIndex >= 0
+    ? requestedIndex
+    : Math.min(Math.max(0, preferredIndex), names.length - 1);
+  files.selectedIndex = index;
+  files.dispatchEvent(new Event('change'));
+}
+
+async function localJson(endpoint, init) {
+  const response = await fetch(endpoint, init);
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // A local server error may not include JSON.
+  }
+  if (!response.ok) throw new Error(data.error || `Local request failed (${response.status})`);
+  return data;
+}
+
+async function loadLocalSettings() {
+  try {
+    localSettings = await localJson('/api/settings');
+    sourceDirectory.value = localSettings.sourceDirectory || '';
+    finalStoreDirectory.value = localSettings.finalStoreDirectory || '';
+  } catch (error) {
+    settingsStatus.textContent = error.message;
+  }
+  updateCmsUi();
+  updateCmsPositionStatus();
+}
+
+async function saveLocalSettings() {
+  saveSettingsButton.disabled = true;
+  settingsStatus.textContent = 'Saving...';
+  try {
+    const response = await localJson('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        sourceDirectory: sourceDirectory.value.trim(),
+        finalStoreDirectory: finalStoreDirectory.value.trim()
+      })
+    });
+    localSettings = response;
+    sourceDirectory.value = response.sourceDirectory;
+    finalStoreDirectory.value = response.finalStoreDirectory;
+    settingsStatus.textContent = 'Settings saved';
+    replaceImageList(response.images, 0);
+    setSidebarView('work');
+    updateCmsUi();
+    updateCmsPositionStatus();
+  } catch (error) {
+    settingsStatus.textContent = error.message;
+  } finally {
+    saveSettingsButton.disabled = false;
   }
 }
 
@@ -691,7 +786,8 @@ function updateCmsUi() {
   cmsUpload.textContent = occupied && cmsPositionIsValid()
     ? `Replace Image ${cmsPosition}`
     : cmsPositionIsValid() ? `Upload as Image ${cmsPosition}` : 'Upload Current Crop';
-  cmsUpload.disabled = !connected || !selectedCmsBook || !cmsPositionIsValid() || Boolean(occupied && !cmsOverwrite.checked);
+  cmsUpload.disabled = !connected || !selectedCmsBook || !cmsPositionIsValid()
+    || !localSettings?.finalStoreDirectory || Boolean(occupied && !cmsOverwrite.checked);
 }
 
 function wait(ms) {
@@ -832,6 +928,10 @@ function selectCmsPosition(position) {
 
 function updateCmsPositionStatus() {
   if (!selectedCmsBook) return;
+  if (!localSettings?.finalStoreDirectory) {
+    cmsUploadStatus.textContent = 'Set a final-store directory in Settings before uploading';
+    return;
+  }
   if (!cmsPositionIsValid()) {
     cmsUploadStatus.textContent = 'Enter a positive image position';
     return;
@@ -871,6 +971,14 @@ async function currentCropBlob() {
   return response.blob();
 }
 
+async function finalizeLocalCrop(blob, sourcePath) {
+  return localJson('/api/finalize?path=' + encodeURIComponent(sourcePath), {
+    method: 'POST',
+    headers: {'Content-Type': 'image/jpeg'},
+    body: blob
+  });
+}
+
 async function uploadCurrentCrop() {
   const occupied = occupiedCmsImage();
   if (!selectedCmsBook || !cmsPositionIsValid() || (occupied && !cmsOverwrite.checked)) return;
@@ -878,7 +986,8 @@ async function uploadCurrentCrop() {
   cmsUploadStatus.textContent = 'Rendering crop...';
   try {
     const blob = await currentCropBlob();
-    const originalName = path().split('/').pop() || 'crop.jpg';
+    const completedPath = path();
+    const originalName = completedPath.split('/').pop() || 'crop.jpg';
     const filename = originalName.replace(/\.[^.]+$/, '') + '.jpg';
     const form = new FormData();
     form.append('image', blob, filename);
@@ -893,7 +1002,16 @@ async function uploadCurrentCrop() {
       .concat([{id: response.data.imageId, position: cmsPosition}]);
     cmsOverwrite.checked = false;
     renderSelectedBook();
-    cmsUploadStatus.textContent = `Uploaded ${filename} as image ${cmsPosition}`;
+    cmsUploadStatus.textContent = 'CMS upload complete. Archiving crop...';
+    let finalized;
+    try {
+      finalized = await finalizeLocalCrop(blob, completedPath);
+    } catch (error) {
+      throw new Error(`CMS upload succeeded; local finalization failed: ${error.message}`);
+    }
+    const completedPosition = cmsPosition;
+    replaceImageList(finalized.images, index);
+    cmsUploadStatus.textContent = `Uploaded ${filename} as image ${completedPosition} and archived locally`;
   } catch (error) {
     cmsUploadStatus.textContent = error.message;
   } finally {
@@ -972,18 +1090,14 @@ cmsOverwrite.onchange = () => {
   updateCmsPositionStatus();
 };
 cmsUpload.onclick = uploadCurrentCrop;
+workTab.onclick = () => setSidebarView('work');
+settingsTab.onclick = () => {
+  setSidebarView('settings');
+  sourceDirectory.focus();
+};
+saveSettingsButton.onclick = saveLocalSettings;
 restoreCmsSession();
+loadLocalSettings();
 fetch('/api/images').then(r => r.json()).then(j => {
-  names = j.images;
-  names.forEach(n => files.add(new Option(n, n)));
-  if (names.length) {
-    const requested = filenameFromHash(),
-      found = names.indexOf(requested);
-    index = found >= 0 ? found : 0;
-    files.selectedIndex = index;
-    renderThumbs();
-    setFilenameHash();
-    load();
-    requestSuggestion();
-  }
+  replaceImageList(j.images, 0, filenameFromHash());
 });
