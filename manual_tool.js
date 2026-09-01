@@ -25,6 +25,7 @@ let names = [],
   moveOrigin = null,
   cursorPoint = null,
   cursorTarget = svg,
+  suggestionRequest = 0,
   rotation = 0,
   zoom = 1,
   pendingCorners = null,
@@ -91,16 +92,26 @@ function applySuggestion(suggestion) {
   rotation = next;
   document.querySelector('#angle').value = rotation.toFixed(1);
   pendingSuggestion = null;
+  status.textContent = suggestion.note?.startsWith('pre-cropped') ? 'Already full-frame' : 'Auto crop ready';
   load(true);
 }
 
 function requestSuggestion() {
+  const request = ++suggestionRequest;
   suggestionEligible = true;
   pendingSuggestion = null;
+  status.textContent = 'Calculating crop...';
   fetch('/api/suggestion?path=' + encodeURIComponent(path())).then(r => r.json()).then(suggestion => {
+    if (request !== suggestionRequest) return;
+    if (!suggestion.corners) {
+      status.textContent = suggestion.note || 'No crop suggestion';
+      return;
+    }
     if (baseNatural[0]) applySuggestion(suggestion);
     else pendingSuggestion = suggestion;
-  }).catch(() => {});
+  }).catch(() => {
+    if (request === suggestionRequest) status.textContent = 'Crop suggestion failed';
+  });
 }
 
 function render() {
