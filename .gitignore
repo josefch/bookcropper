@@ -1,0 +1,11 @@
+.env
+__pycache__/
+.venv/
+.DS_Store
+manual_crops/
+ai_review_results/
+audit_crops/
+previews_unified/
+cutouts/
+.local_archive/
+.claude/
