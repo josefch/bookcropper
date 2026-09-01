@@ -20,6 +20,11 @@ let names = [],
   dragging = false,
   lineMode = false,
   lineStart = null,
+  moveMode = false,
+  moveStart = null,
+  moveOrigin = null,
+  cursorPoint = null,
+  cursorTarget = svg,
   rotation = 0,
   zoom = 1,
   pendingCorners = null,
@@ -305,9 +310,38 @@ function clampCorners() {
     p[1] = Math.max(0, Math.min(natural[1], p[1]));
   });
 }
+
+function pointInsideRectangle(p) {
+  return p[0] >= corners[0][0] && p[0] <= corners[1][0] &&
+    p[1] >= corners[0][1] && p[1] <= corners[2][1];
+}
+
+function updateCursor(point, target, optionHeld) {
+  cursorPoint = point;
+  cursorTarget = target;
+  if (optionHeld && target?.dataset.edge === undefined && pointInsideRectangle(point)) {
+    svg.classList.add('option-move');
+    svg.classList.remove('option-straighten');
+  } else if (optionHeld) {
+    svg.classList.add('option-straighten');
+    svg.classList.remove('option-move');
+  } else {
+    svg.classList.remove('option-move', 'option-straighten');
+  }
+}
+
 svg.addEventListener('pointerdown', e => {
   suggestionEligible = false;
   const p = canvasPoint(e);
+  updateCursor(p, e.target, e.altKey);
+  if (e.altKey && e.target.dataset.edge === undefined && pointInsideRectangle(p)) {
+    moveMode = true;
+    moveStart = p;
+    moveOrigin = corners.map(corner => [...corner]);
+    dragging = true;
+    svg.setPointerCapture(e.pointerId);
+    return;
+  }
   if (e.altKey) {
     lineMode = true;
     lineStart = p;
@@ -354,10 +388,19 @@ function drawStraightenLine(a, b) {
 }
 svg.addEventListener('pointermove', e => {
   const p = canvasPoint(e);
+  updateCursor(p, e.target, e.altKey);
   drawLoupe(p);
   if (!dragging) return;
   if (lineMode) {
     drawStraightenLine(lineStart, p);
+    return;
+  }
+  if (moveMode) {
+    const dx = p[0] - moveStart[0],
+      dy = p[1] - moveStart[1];
+    corners = moveOrigin.map(corner => [corner[0] + dx, corner[1] + dy]);
+    clampCorners();
+    render();
     return;
   }
   if (rotateMode) {
@@ -477,6 +520,9 @@ function finishPointer(e) {
   }
   lineMode = false;
   lineStart = null;
+  moveMode = false;
+  moveStart = null;
+  moveOrigin = null;
   rotateMode = false;
   rotateScreenCenter = null;
   dragging = false;
@@ -485,6 +531,12 @@ function finishPointer(e) {
 }
 svg.addEventListener('pointerup', finishPointer);
 svg.addEventListener('pointercancel', finishPointer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Alt' && cursorPoint) updateCursor(cursorPoint, cursorTarget, true);
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'Alt') svg.classList.remove('option-move', 'option-straighten');
+});
 
 function drawPreview() {
   // The scan overview replaces the old crop preview panel.
