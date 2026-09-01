@@ -17,6 +17,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+OUTPUT_SCALE = 0.5
 
 
 def order_corners(points):
@@ -84,14 +85,16 @@ def save_crop(source: Path, output: Path, points: list[list[float]], rotation: f
         image = oriented_image(source)
     if rotation:
         image = image.rotate(rotation, expand=True)
-        src = order_corners(points)
-        left = max(0, min(image.width - 1, round(min(p[0] for p in src))))
-        top = max(0, min(image.height - 1, round(min(p[1] for p in src))))
-        right = max(left + 1, min(image.width, round(max(p[0] for p in src))))
-        bottom = max(top + 1, min(image.height, round(max(p[1] for p in src))))
-        crop = image.convert("RGB").crop((left, top, right, bottom))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        crop.save(output, quality=95)
+    src = order_corners(points)
+    left = max(0, min(image.width - 1, round(min(p[0] for p in src))))
+    top = max(0, min(image.height - 1, round(min(p[1] for p in src))))
+    right = max(left + 1, min(image.width, round(max(p[0] for p in src))))
+    bottom = max(top + 1, min(image.height, round(max(p[1] for p in src))))
+    crop = image.convert("RGB").crop((left, top, right, bottom))
+    size = (max(1, round(crop.width * OUTPUT_SCALE)), max(1, round(crop.height * OUTPUT_SCALE)))
+    crop = crop.resize(size, Image.Resampling.LANCZOS)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    crop.save(output, quality=95, dpi=(150, 150))
 
 
 class Handler(BaseHTTPRequestHandler):
