@@ -597,11 +597,11 @@ fetch('/api/images').then(r => r.json()).then(j => {
   names = j.images;
   names.forEach(n => files.add(new Option(n, n)));
   if (names.length) {
-    renderThumbs();
     const requested = filenameFromHash(),
       found = names.indexOf(requested);
     index = found >= 0 ? found : 0;
     files.selectedIndex = index;
+    renderThumbs();
     setFilenameHash();
     load();
     requestSuggestion();
