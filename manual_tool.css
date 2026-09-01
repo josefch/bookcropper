@@ -1,5 +1,6 @@
 :root { color-scheme: dark; --bg:#16181b; --panel:#22262b; --line:#3b424a; --accent:#58a6ff; }
 * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:#e8edf2; font:14px system-ui,sans-serif; }
+[hidden] { display:none !important; }
 header { height:54px; display:flex; align-items:center; gap:8px; padding:0 16px; border-bottom:1px solid var(--line); background:var(--panel); }
 select,button,input { background:#2c333b; color:inherit; border:1px solid #4c5661; padding:7px 10px; border-radius:4px; }
 .file-picker { position:relative; display:block; width:260px; flex:0 1 260px; }
@@ -8,7 +9,7 @@ select,button,input { background:#2c333b; color:inherit; border:1px solid #4c566
 .rotate-zone { cursor:grab; }
 input { width:72px; }
 button { cursor:pointer; } button:hover { border-color:var(--accent); } #status { color:#9da7b2; margin-left:auto; }
-main { display:grid; grid-template-columns:minmax(440px,1fr) 300px; height:calc(100vh - 54px); }
+main { display:grid; grid-template-columns:minmax(440px,1fr) 360px; height:calc(100vh - 54px); }
 #work { min-width:0; display:flex; align-items:center; justify-content:center; padding:18px; overflow:auto; }
 #work.zoomed { align-items:flex-start; justify-content:flex-start; }
 #stage { position:relative; max-width:100%; max-height:100%; } #image { display:block; max-width:100%; max-height:calc(100vh - 90px); object-fit:contain; user-select:none; transform-origin:center center; }
@@ -18,7 +19,33 @@ main { display:grid; grid-template-columns:minmax(440px,1fr) 300px; height:calc(
 .handle { fill:#58a6ff; stroke:#fff; stroke-width:2; }
 aside { border-left:1px solid var(--line); background:var(--panel); padding:16px; overflow:auto; }
 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:#9da7b2; margin:0 0 12px; } #preview { width:100%; background:#111; border:1px solid var(--line); }
-.thumb-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; max-height:34vh; overflow:auto; margin-bottom:18px; }
+.cms-panel { padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--line); }
+.section-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.section-heading h2 { margin-bottom:8px; }
+.connection-state { color:#9da7b2; font-size:12px; white-space:nowrap; }
+.cms-connect-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; }
+.cms-connect-row input { width:100%; min-width:0; }
+.approval-link { display:block; margin-top:8px; color:var(--accent); font-size:12px; }
+.field-label { display:block; margin:12px 0 6px; color:#9da7b2; font-size:12px; }
+#cmsSearch { width:100%; }
+.book-results { max-height:190px; margin-top:6px; overflow:auto; border-top:1px solid var(--line); }
+.book-result { display:block; width:100%; padding:8px 4px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; text-align:left; }
+.book-result:hover { background:#2c333b; }
+.book-result strong,.book-result span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.book-result strong { font-size:13px; font-weight:600; }
+.book-result span,.book-result-empty { margin-top:3px; color:#9da7b2; font-size:12px; }
+.book-result-empty { padding:9px 4px; }
+.selected-book { margin-top:8px; padding:8px; border-left:3px solid var(--accent); background:#1b2025; line-height:1.4; }
+.upload-controls { display:flex; align-items:end; justify-content:space-between; gap:12px; margin-top:10px; }
+.upload-controls .field-label { margin:0 0 7px; }
+.position-field { display:block; }
+#cmsPosition { width:96px; }
+.overwrite-control { display:flex; align-items:center; gap:7px; min-height:34px; color:#f0b45b; font-size:12px; cursor:pointer; }
+.overwrite-control input { width:auto; margin:0; accent-color:#d29922; }
+.upload-button { width:100%; margin-top:10px; background:#238636; border-color:#2ea043; }
+.upload-button:disabled { cursor:not-allowed; opacity:.5; }
+.cms-status { min-height:18px; margin:8px 0 0; color:#9da7b2; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+.thumb-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; max-height:26vh; overflow:auto; margin-bottom:18px; }
 .thumb { display:block; width:100%; aspect-ratio:1/1; object-fit:contain; background:#111; border:2px solid transparent; cursor:pointer; }
 .thumb:hover { border-color:#9da7b2; } .thumb.active { border-color:var(--accent); }
 .loupe { width:240px; height:240px; background:#111; border:1px solid var(--line); }

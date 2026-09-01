@@ -32,7 +32,10 @@ Allow the local Bookcropper to search books and upload processed images to the C
 - The scoped guard checks token prefix, cache record, expiry, and required scope.
 - No changes are made to `SessionGuard` or ordinary admin authentication.
 - Tokens are revocable and are never logged.
-- The upload endpoint validates book ID, image position (`1`, `2`, or `3`), MIME type, size, and decoded image dimensions.
+- The upload endpoint validates book ID, positive integer image position, MIME
+  type, size, and decoded image dimensions.
+- Occupied image positions are locked by default and require an explicit
+  overwrite flag from an unlocked cropper control.
 
 ## Local Development
 

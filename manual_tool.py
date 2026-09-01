@@ -78,9 +78,10 @@ def corrected_source(path: str, mtime_ns: int) -> Image.Image:
         return colorchecker_correction(ImageOps.exif_transpose(image).convert("RGB"))
 
 
-def save_crop(source: Path, output: Path, points: list[list[float]], rotation: float = 0, correction: bool = True) -> None:
+def render_crop(source: Path, points: list[list[float]], rotation: float = 0,
+                correction: bool = True) -> Image.Image:
     if correction:
-            image = corrected_source(str(source), source.stat().st_mtime_ns)
+        image = corrected_source(str(source), source.stat().st_mtime_ns)
     else:
         image = oriented_image(source)
     if rotation:
@@ -92,9 +93,22 @@ def save_crop(source: Path, output: Path, points: list[list[float]], rotation: f
     bottom = max(top + 1, min(image.height, round(max(p[1] for p in src))))
     crop = image.convert("RGB").crop((left, top, right, bottom))
     size = (max(1, round(crop.width * OUTPUT_SCALE)), max(1, round(crop.height * OUTPUT_SCALE)))
-    crop = crop.resize(size, Image.Resampling.LANCZOS)
+    return crop.resize(size, Image.Resampling.LANCZOS)
+
+
+def save_crop(source: Path, output: Path, points: list[list[float]], rotation: float = 0,
+              correction: bool = True) -> None:
+    crop = render_crop(source, points, rotation, correction)
     output.parent.mkdir(parents=True, exist_ok=True)
     crop.save(output, quality=95, dpi=(150, 150))
+
+
+def crop_jpeg(source: Path, points: list[list[float]], rotation: float = 0,
+              correction: bool = True) -> bytes:
+    crop = render_crop(source, points, rotation, correction)
+    buffer = io.BytesIO()
+    crop.save(buffer, format="JPEG", quality=95, dpi=(150, 150))
+    return buffer.getvalue()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -205,7 +219,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path != "/api/save":
+        if self.path not in ("/api/save", "/api/crop"):
             self.send_error(404)
             return
         try:
@@ -219,6 +233,11 @@ class Handler(BaseHTTPRequestHandler):
             source = (self.source / rel).resolve()
             if not source.is_file() or self.source not in source.parents:
                 raise ValueError("invalid source path")
+            if self.path == "/api/crop":
+                with self.lock:
+                    data = crop_jpeg(source, points, rotation, correction)
+                self.send_bytes(data, "image/jpeg")
+                return
             stem = Path(rel).stem
             out = self.output / f"{stem}.jpg"
             sidecar = self.output / f"{stem}.json"

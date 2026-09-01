@@ -6,7 +6,20 @@ const files = document.querySelector('#files'),
   loupe = document.querySelector('#loupe'),
   status = document.querySelector('#status'),
   info = document.querySelector('#info'),
-  correction = document.querySelector('#correction');
+  correction = document.querySelector('#correction'),
+  cmsUrl = document.querySelector('#cmsUrl'),
+  cmsConnect = document.querySelector('#cmsConnect'),
+  cmsConnection = document.querySelector('#cmsConnection'),
+  cmsConnected = document.querySelector('#cmsConnected'),
+  cmsApprovalLink = document.querySelector('#cmsApprovalLink'),
+  cmsSearch = document.querySelector('#cmsSearch'),
+  cmsResults = document.querySelector('#cmsResults'),
+  cmsSelected = document.querySelector('#cmsSelected'),
+  cmsUpload = document.querySelector('#cmsUpload'),
+  cmsUploadStatus = document.querySelector('#cmsUploadStatus'),
+  cmsPositionInput = document.querySelector('#cmsPosition'),
+  cmsOverwriteControl = document.querySelector('#cmsOverwriteControl'),
+  cmsOverwrite = document.querySelector('#cmsOverwrite');
 let names = [],
   index = 0,
   natural = [0, 0],
@@ -30,8 +43,15 @@ let names = [],
   zoom = 1,
   pendingCorners = null,
   pendingSuggestion = null,
-  suggestionEligible = true;
+  suggestionEligible = true,
+  cmsToken = null,
+  cmsTokenExpiresAt = 0,
+  selectedCmsBook = null,
+  cmsPosition = 1,
+  cmsSearchTimer = null;
 const NS = 'http://www.w3.org/2000/svg';
+const CMS_SESSION_KEY = 'bookcropper.cms.session';
+const MAX_CMS_POSITION = 2147483647;
 
 function defaultCorners() {
   const [w, h] = natural, m = Math.min(w, h) * .025;
@@ -48,7 +68,10 @@ function path() {
 }
 
 function setFilenameHash() {
-  if (path()) history.replaceState(null, '', '#' + encodeURIComponent(path()));
+  if (path()) {
+    history.replaceState(null, '', '#' + encodeURIComponent(path()));
+    syncCmsPositionFromFilename();
+  }
 }
 
 function filenameFromHash() {
@@ -552,9 +575,338 @@ document.addEventListener('keyup', e => {
 function drawPreview() {
   // The scan overview replaces the old crop preview panel.
 }
+
+function cropPayload() {
+  return {
+    path: path(),
+    rotation,
+    corners,
+    correction: correction.checked
+  };
+}
+
+function cmsApiBase() {
+  return cmsUrl.value.trim().replace(/\/+$/, '');
+}
+
+function cmsErrorMessage(data, fallback) {
+  if (Array.isArray(data?.message)) return data.message.join(', ');
+  return data?.message || data?.error || fallback;
+}
+
+async function cmsRequest(endpoint, init = {}, authenticated = true) {
+  const headers = new Headers(init.headers || {});
+  headers.set('x-tenant-id', 'jc');
+  if (authenticated && cmsToken) headers.set('Authorization', 'Bearer ' + cmsToken);
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(cmsApiBase() + endpoint, {...init, headers});
+  const text = await response.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = {message: text};
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(cmsErrorMessage(data, `CMS request failed (${response.status})`));
+    error.status = response.status;
+    if (response.status === 401 && authenticated) clearCmsSession('Connection expired');
+    throw error;
+  }
+  return data;
+}
+
+function setCmsSession(token, expiresAt) {
+  cmsToken = token;
+  cmsTokenExpiresAt = Number(expiresAt) || 0;
+  sessionStorage.setItem(CMS_SESSION_KEY, JSON.stringify({
+    token: cmsToken,
+    expiresAt: cmsTokenExpiresAt,
+    apiBase: cmsApiBase()
+  }));
+  updateCmsUi();
+}
+
+function clearCmsSession(message = 'Disconnected') {
+  cmsToken = null;
+  cmsTokenExpiresAt = 0;
+  selectedCmsBook = null;
+  cmsOverwrite.checked = false;
+  sessionStorage.removeItem(CMS_SESSION_KEY);
+  cmsResults.replaceChildren();
+  cmsSelected.hidden = true;
+  cmsUploadStatus.textContent = '';
+  cmsConnection.textContent = message;
+  updateCmsUi();
+}
+
+function cmsPositionIsValid() {
+  return Number.isInteger(cmsPosition) && cmsPosition > 0 && cmsPosition <= MAX_CMS_POSITION;
+}
+
+function occupiedCmsImage() {
+  if (!selectedCmsBook || !cmsPositionIsValid()) return null;
+  return (selectedCmsBook.images || []).find(item => Number(item.position) === cmsPosition) || null;
+}
+
+function restoreCmsSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CMS_SESSION_KEY) || 'null');
+    if (saved?.token && Number(saved.expiresAt) > Date.now()) {
+      if (saved.apiBase) cmsUrl.value = saved.apiBase;
+      cmsToken = saved.token;
+      cmsTokenExpiresAt = Number(saved.expiresAt);
+    } else {
+      sessionStorage.removeItem(CMS_SESSION_KEY);
+    }
+  } catch {
+    sessionStorage.removeItem(CMS_SESSION_KEY);
+  }
+  updateCmsUi();
+}
+
+function updateCmsUi() {
+  const connected = Boolean(cmsToken && cmsTokenExpiresAt > Date.now());
+  if (!connected && cmsToken) {
+    cmsToken = null;
+    cmsTokenExpiresAt = 0;
+    sessionStorage.removeItem(CMS_SESSION_KEY);
+  }
+  cmsConnected.hidden = !connected;
+  cmsUrl.disabled = connected;
+  cmsConnect.textContent = connected ? 'Disconnect' : 'Connect';
+  if (connected) {
+    const minutes = Math.max(1, Math.ceil((cmsTokenExpiresAt - Date.now()) / 60000));
+    cmsConnection.textContent = `Connected · ${minutes}m`;
+  } else if (cmsConnection.textContent.startsWith('Connected')) {
+    cmsConnection.textContent = 'Disconnected';
+  }
+  const occupied = occupiedCmsImage();
+  if (!occupied) cmsOverwrite.checked = false;
+  cmsOverwriteControl.hidden = !connected || !selectedCmsBook || !occupied;
+  cmsUpload.textContent = occupied && cmsPositionIsValid()
+    ? `Replace Image ${cmsPosition}`
+    : cmsPositionIsValid() ? `Upload as Image ${cmsPosition}` : 'Upload Current Crop';
+  cmsUpload.disabled = !connected || !selectedCmsBook || !cmsPositionIsValid() || Boolean(occupied && !cmsOverwrite.checked);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function connectCms() {
+  if (cmsToken && cmsTokenExpiresAt > Date.now()) {
+    try {
+      await cmsRequest('/admin/bookcropper/revoke', {method: 'POST'});
+    } catch {
+      // The local session is cleared even if the token already expired.
+    }
+    clearCmsSession();
+    return;
+  }
+
+  const popup = window.open('about:blank', 'bookcropper-pairing', 'popup,width=620,height=720');
+  cmsConnect.disabled = true;
+  cmsConnection.textContent = 'Starting...';
+  cmsUploadStatus.textContent = '';
+  try {
+    const pairing = await cmsRequest('/admin/auth/bookcropper/pair/start', {
+      method: 'POST',
+      body: '{}'
+    }, false);
+    cmsApprovalLink.href = pairing.approvalUrl;
+    cmsApprovalLink.hidden = false;
+    cmsConnection.textContent = 'Awaiting approval';
+    cmsUploadStatus.textContent = 'Approve code ' + pairing.code;
+    if (popup) popup.location.href = pairing.approvalUrl;
+
+    while (Date.now() < Number(pairing.expiresAt)) {
+      await wait(Number(pairing.pollIntervalMs) || 1000);
+      try {
+        const exchange = await cmsRequest('/admin/auth/bookcropper/pair/exchange', {
+          method: 'POST',
+          body: JSON.stringify({code: pairing.code})
+        }, false);
+        if (exchange.status === 'approved' && exchange.token) {
+          setCmsSession(exchange.token, exchange.expiresAt);
+          cmsApprovalLink.hidden = true;
+          cmsUploadStatus.textContent = 'CMS connection approved';
+          if (popup) popup.close();
+          cmsSearch.focus();
+          return;
+        }
+      } catch (error) {
+        if (error.status !== 429) throw error;
+      }
+    }
+    throw new Error('Pairing code expired');
+  } catch (error) {
+    cmsConnection.textContent = 'Connection failed';
+    cmsUploadStatus.textContent = error.message;
+  } finally {
+    cmsConnect.disabled = false;
+  }
+}
+
+function bookLabel(book) {
+  return [book.author, book.title, book.year].filter(Boolean).join(' · ');
+}
+
+function renderSelectedBook() {
+  if (!selectedCmsBook) {
+    cmsSelected.hidden = true;
+    updateCmsUi();
+    return;
+  }
+  const positions = (selectedCmsBook.images || [])
+    .map(item => Number(item.position))
+    .filter(position => Number.isInteger(position) && position > 0)
+    .sort((a, b) => a - b)
+    .join(', ');
+  cmsSelected.textContent = bookLabel(selectedCmsBook) + (positions ? ` · images ${positions}` : ' · no images');
+  cmsSelected.hidden = false;
+  updateCmsUi();
+}
+
+function selectCmsBook(book) {
+  selectedCmsBook = book;
+  cmsOverwrite.checked = false;
+  cmsResults.replaceChildren();
+  cmsSearch.value = book.title;
+  renderSelectedBook();
+  updateCmsPositionStatus();
+}
+
+function renderCmsBooks(books) {
+  cmsResults.replaceChildren();
+  if (!books.length) {
+    const empty = document.createElement('div');
+    empty.className = 'book-result-empty';
+    empty.textContent = 'No books found';
+    cmsResults.appendChild(empty);
+    return;
+  }
+  books.forEach(book => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'book-result';
+    const title = document.createElement('strong');
+    title.textContent = book.title;
+    const meta = document.createElement('span');
+    meta.textContent = [book.author, book.year, book.publisher].filter(Boolean).join(' · ');
+    button.append(title, meta);
+    button.onclick = () => selectCmsBook(book);
+    cmsResults.appendChild(button);
+  });
+}
+
+async function searchCmsBooks() {
+  const query = cmsSearch.value.trim();
+  if (query.length < 2 && !/^\d+$/.test(query)) {
+    cmsResults.replaceChildren();
+    return;
+  }
+  cmsResults.textContent = 'Searching...';
+  try {
+    const response = await cmsRequest('/admin/bookcropper/books?q=' + encodeURIComponent(query));
+    renderCmsBooks(response.data || []);
+  } catch (error) {
+    cmsResults.textContent = error.message;
+  }
+}
+
+function selectCmsPosition(position) {
+  const next = Number(position);
+  cmsPosition = Number.isInteger(next) && next > 0 && next <= MAX_CMS_POSITION
+    ? next
+    : null;
+  if (cmsPosition !== null) cmsPositionInput.value = String(cmsPosition);
+  cmsOverwrite.checked = false;
+  updateCmsUi();
+  updateCmsPositionStatus();
+}
+
+function updateCmsPositionStatus() {
+  if (!selectedCmsBook) return;
+  if (!cmsPositionIsValid()) {
+    cmsUploadStatus.textContent = 'Enter a positive image position';
+    return;
+  }
+  if (occupiedCmsImage()) {
+    cmsUploadStatus.textContent = cmsOverwrite.checked
+      ? `Replacement of image ${cmsPosition} unlocked`
+      : `Image ${cmsPosition} already exists. Unlock replacement to overwrite.`;
+    return;
+  }
+  cmsUploadStatus.textContent = `Image position ${cmsPosition} is available`;
+}
+
+function syncCmsPositionFromFilename() {
+  const match = path()?.match(/_(\d+)\.[^.]+$/i);
+  if (match) selectCmsPosition(Number(match[1]));
+}
+
+async function currentCropBlob() {
+  const response = await fetch('/api/crop', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cropPayload())
+  });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Restart the cropper server to enable CMS uploads');
+    }
+    let message = 'Unable to render crop';
+    try {
+      message = (await response.json()).error || message;
+    } catch {
+      // Keep the generic message for non-JSON errors.
+    }
+    throw new Error(message);
+  }
+  return response.blob();
+}
+
+async function uploadCurrentCrop() {
+  const occupied = occupiedCmsImage();
+  if (!selectedCmsBook || !cmsPositionIsValid() || (occupied && !cmsOverwrite.checked)) return;
+  cmsUpload.disabled = true;
+  cmsUploadStatus.textContent = 'Rendering crop...';
+  try {
+    const blob = await currentCropBlob();
+    const originalName = path().split('/').pop() || 'crop.jpg';
+    const filename = originalName.replace(/\.[^.]+$/, '') + '.jpg';
+    const form = new FormData();
+    form.append('image', blob, filename);
+    if (occupied && cmsOverwrite.checked) form.append('overwrite', 'true');
+    cmsUploadStatus.textContent = `Uploading image ${cmsPosition}...`;
+    const response = await cmsRequest(
+      `/admin/bookcropper/books/${selectedCmsBook.id}/images/${cmsPosition}`,
+      {method: 'POST', body: form}
+    );
+    selectedCmsBook.images = (selectedCmsBook.images || [])
+      .filter(item => Number(item.position) !== cmsPosition)
+      .concat([{id: response.data.imageId, position: cmsPosition}]);
+    cmsOverwrite.checked = false;
+    renderSelectedBook();
+    cmsUploadStatus.textContent = `Uploaded ${filename} as image ${cmsPosition}`;
+  } catch (error) {
+    cmsUploadStatus.textContent = error.message;
+  } finally {
+    updateCmsUi();
+  }
+}
+
 files.onchange = () => {
   index = files.selectedIndex;
+  cmsOverwrite.checked = false;
   setFilenameHash();
+  updateCmsUi();
+  updateCmsPositionStatus();
   updateActiveThumb();
   rotation = 0;
   document.querySelector('#angle').value = '0.0';
@@ -579,12 +931,7 @@ document.querySelector('#save').onclick = async () => {
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      path: path(),
-      rotation,
-      corners,
-      correction: correction.checked
-    })
+    body: JSON.stringify(cropPayload())
   });
   const j = await r.json();
   status.textContent = j.error || 'Saved ' + j.saved;
@@ -599,11 +946,33 @@ document.querySelector('#zoomLabel').onclick = () => setZoom(1);
 document.querySelector('#loupeToggle').onchange = () => drawLoupe([natural[0] / 2, natural[1] / 2]);
 document.querySelector('#loupeZoom').onchange = () => drawLoupe([natural[0] / 2, natural[1] / 2]);
 document.addEventListener('keydown', e => {
+  if (e.target.closest('input, select, textarea, button')) return;
   if (e.key === 'ArrowLeft' || e.key === 'a') move(-1);
   if (e.key === 'ArrowRight' || e.key === 'd') move(1);
   if (e.key === 'Enter') document.querySelector('#save').click();
 });
 window.addEventListener('resize', fitStage);
+cmsConnect.onclick = connectCms;
+cmsSearch.oninput = () => {
+  clearTimeout(cmsSearchTimer);
+  cmsSearchTimer = setTimeout(searchCmsBooks, 300);
+};
+cmsSearch.onkeydown = e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    clearTimeout(cmsSearchTimer);
+    searchCmsBooks();
+  }
+};
+cmsPositionInput.oninput = () => {
+  selectCmsPosition(cmsPositionInput.value);
+};
+cmsOverwrite.onchange = () => {
+  updateCmsUi();
+  updateCmsPositionStatus();
+};
+cmsUpload.onclick = uploadCurrentCrop;
+restoreCmsSession();
 fetch('/api/images').then(r => r.json()).then(j => {
   names = j.images;
   names.forEach(n => files.add(new Option(n, n)));
