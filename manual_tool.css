@@ -55,4 +55,7 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:#9da7
 .thumb:hover { border-color:#9da7b2; } .thumb.active { border-color:var(--accent); }
 .loupe { width:240px; height:240px; background:#111; border:1px solid var(--line); }
 .loupe-controls { display:flex; align-items:center; gap:8px; margin-top:8px; color:#9da7b2; } .loupe-controls input { width:auto; }
+.processing-options { display:grid; gap:8px; margin:14px 0; color:#9da7b2; }
+.processing-options label { display:flex; align-items:center; gap:8px; line-height:1.4; }
+.processing-options input { width:auto; margin:0; flex:0 0 auto; }
 .hint { color:#9da7b2; line-height:1.5; margin:14px 0; } .row { display:flex; gap:8px; margin-top:12px; } #save { background:#238636; border-color:#2ea043; flex:1; }
