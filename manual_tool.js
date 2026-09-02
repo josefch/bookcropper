@@ -7,6 +7,7 @@ const files = document.querySelector('#files'),
   status = document.querySelector('#status'),
   info = document.querySelector('#info'),
   correction = document.querySelector('#correction'),
+  trimDarkEdges = document.querySelector('#trimDarkEdges'),
   cmsUrl = document.querySelector('#cmsUrl'),
   cmsConnect = document.querySelector('#cmsConnect'),
   cmsConnection = document.querySelector('#cmsConnection'),
@@ -718,7 +719,8 @@ function cropPayload() {
     path: path(),
     rotation,
     corners,
-    correction: correction.checked
+    correction: correction.checked,
+    trimDarkEdges: trimDarkEdges.checked
   };
 }
 

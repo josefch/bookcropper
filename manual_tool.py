@@ -20,6 +20,11 @@ from PIL import Image, ImageOps
 EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 OUTPUT_SCALE = 0.5
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "bookcropper" / "config.json"
+DARK_EDGE_THRESHOLD = 40
+DARK_EDGE_CLEAN_FRACTION = 0.985
+DARK_EDGE_MAX_RATIO = 0.025
+DARK_EDGE_MAX_PIXELS = 64
+DARK_EDGE_STABLE_LINES = 3
 
 
 class RequestError(ValueError):
@@ -125,8 +130,39 @@ def corrected_source(path: str, mtime_ns: int) -> Image.Image:
         return colorchecker_correction(ImageOps.exif_transpose(image).convert("RGB"))
 
 
+def _dark_edge_inset(grayscale: np.ndarray, axis: int, reverse: bool = False) -> int:
+    light_fraction = (grayscale > DARK_EDGE_THRESHOLD).mean(axis=axis)
+    if reverse:
+        light_fraction = light_fraction[::-1]
+    if not len(light_fraction) or light_fraction[0] >= DARK_EDGE_CLEAN_FRACTION:
+        return 0
+    maximum = min(
+        DARK_EDGE_MAX_PIXELS,
+        max(2, round(len(light_fraction) * DARK_EDGE_MAX_RATIO)),
+    )
+    for inset in range(1, maximum + 1):
+        end = inset + DARK_EDGE_STABLE_LINES
+        if end <= len(light_fraction) and np.all(
+            light_fraction[inset:end] >= DARK_EDGE_CLEAN_FRACTION
+        ):
+            return inset
+    return 0
+
+
+def trim_dark_scanner_edges(image: Image.Image) -> Image.Image:
+    """Remove only thin near-black margins that quickly transition into the book."""
+    grayscale = np.asarray(image.convert("L"))
+    top = _dark_edge_inset(grayscale, axis=1)
+    bottom = _dark_edge_inset(grayscale, axis=1, reverse=True)
+    left = _dark_edge_inset(grayscale, axis=0)
+    right = _dark_edge_inset(grayscale, axis=0, reverse=True)
+    if not any((left, top, right, bottom)):
+        return image
+    return image.crop((left, top, image.width - right, image.height - bottom))
+
+
 def render_crop(source: Path, points: list[list[float]], rotation: float = 0,
-                correction: bool = True) -> Image.Image:
+                correction: bool = True, trim_dark_edges: bool = True) -> Image.Image:
     if correction:
         image = corrected_source(str(source), source.stat().st_mtime_ns)
     else:
@@ -139,20 +175,22 @@ def render_crop(source: Path, points: list[list[float]], rotation: float = 0,
     right = max(left + 1, min(image.width, round(max(p[0] for p in src))))
     bottom = max(top + 1, min(image.height, round(max(p[1] for p in src))))
     crop = image.convert("RGB").crop((left, top, right, bottom))
+    if trim_dark_edges:
+        crop = trim_dark_scanner_edges(crop)
     size = (max(1, round(crop.width * OUTPUT_SCALE)), max(1, round(crop.height * OUTPUT_SCALE)))
     return crop.resize(size, Image.Resampling.LANCZOS)
 
 
 def save_crop(source: Path, output: Path, points: list[list[float]], rotation: float = 0,
-              correction: bool = True) -> None:
-    crop = render_crop(source, points, rotation, correction)
+              correction: bool = True, trim_dark_edges: bool = True) -> None:
+    crop = render_crop(source, points, rotation, correction, trim_dark_edges)
     output.parent.mkdir(parents=True, exist_ok=True)
     crop.save(output, quality=95, dpi=(150, 150))
 
 
 def crop_jpeg(source: Path, points: list[list[float]], rotation: float = 0,
-              correction: bool = True) -> bytes:
-    crop = render_crop(source, points, rotation, correction)
+              correction: bool = True, trim_dark_edges: bool = True) -> bytes:
+    crop = render_crop(source, points, rotation, correction, trim_dark_edges)
     buffer = io.BytesIO()
     crop.save(buffer, format="JPEG", quality=95, dpi=(150, 150))
     return buffer.getvalue()
@@ -297,20 +335,21 @@ class Handler(BaseHTTPRequestHandler):
             points = body["corners"]
             rotation = float(body.get("rotation", 0)) % 360
             correction = bool(body.get("correction", True))
+            trim_dark_edges = bool(body.get("trimDarkEdges", True))
             if len(points) != 4 or any(len(p) != 2 for p in points):
                 raise RequestError("four [x,y] corners required")
             source = self.source_path(rel)
             if parsed.path == "/api/crop":
                 with self.lock:
-                    data = crop_jpeg(source, points, rotation, correction)
+                    data = crop_jpeg(source, points, rotation, correction, trim_dark_edges)
                 self.send_bytes(data, "image/jpeg")
                 return
             stem = Path(rel).stem
             out = self.output / f"{stem}.jpg"
             sidecar = self.output / f"{stem}.json"
             with self.lock:
-                save_crop(source, out, points, rotation, correction)
-                sidecar.write_text(json.dumps({"source": rel, "rotation": rotation, "correction": correction, "corners": points}, indent=2) + "\n")
+                save_crop(source, out, points, rotation, correction, trim_dark_edges)
+                sidecar.write_text(json.dumps({"source": rel, "rotation": rotation, "correction": correction, "trimDarkEdges": trim_dark_edges, "corners": points}, indent=2) + "\n")
             self.send_json({"saved": str(out), "sidecar": str(sidecar)})
         except RequestError as exc:
             self.send_json({"error": str(exc)}, exc.status)

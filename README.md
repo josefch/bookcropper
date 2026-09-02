@@ -31,6 +31,12 @@ CLI values override persisted settings for the current process. Use
 
 The editor supports rectangular crop handles, draggable crop edges, corner rotation, Option/Alt straighten guides, zoom, corner magnification, filename URL hashes, and the optional ColorChecker correction preset.
 
+**Trim dark scanner edges** is enabled by default. During export it removes
+only a thin near-black margin that transitions immediately into clean book
+pixels. It is capped at 2.5%/64 pixels per edge and leaves dark covers alone
+when no clean transition is found. Disable it for artwork with an intentional
+thin black outer border.
+
 ### CMS upload
 
 With the JC CMS API running on `http://localhost:3008` and the admin on
