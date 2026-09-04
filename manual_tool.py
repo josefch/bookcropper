@@ -115,8 +115,8 @@ def colorchecker_correction(image: Image.Image) -> Image.Image:
     second = chroma * (1 - np.abs(sector % 2 - 1))
     match = value - chroma
     hsv_rgb = np.zeros_like(rgb)
-    for start, components in ((0, (0, 1, 2)), (1, (1, 0, 2)), (2, (2, 0, 1)),
-                              (3, (2, 1, 0)), (4, (1, 2, 0)), (5, (0, 2, 1))):
+    for start, components in ((0, (0, 1, 2)), (1, (1, 0, 2)), (2, (1, 2, 0)),
+                              (3, (2, 1, 0)), (4, (2, 0, 1)), (5, (0, 2, 1))):
         mask = (sector >= start) & (sector < start + 1)
         hsv_rgb[mask, components[0]] = chroma[mask]
         hsv_rgb[mask, components[1]] = second[mask]
